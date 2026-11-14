@@ -917,4 +917,43 @@
         timerState = 'running';
         timerStartBtn.textContent = '一時停止';
         timerStartBtn.classList.add('running');
-   
+        timerIntervalId = setInterval(timerTick, 200);
+        timerTick();
+      }
+    });
+
+    timerResetBtn.addEventListener('click', resetTimer);
+
+    favRegisterBtn.addEventListener('click', function(){
+      if(registering){ exitRegistering(); return; }
+      registering = true;
+      favRegisterBtn.setAttribute('aria-pressed', 'true');
+      favSlotsWrap.classList.add('registering');
+      favCaption.textContent = '登録先をタップ';
+    });
+
+    favSlotEls.forEach(function(slot){
+      slot.addEventListener('click', function(){
+        var idx = +slot.dataset.slot;
+        if(registering){
+          favorites[idx] = snapVolume(parseFloat(volumeInput.value) || VOL_MIN);
+          exitRegistering();
+          renderFavorites();
+          saveState();
+        }else if(favorites[idx] != null){
+          volumeInput.value = favorites[idx];
+          render();
+        }else{
+          favorites[idx] = snapVolume(parseFloat(volumeInput.value) || VOL_MIN);
+          renderFavorites();
+          saveState();
+        }
+      });
+    });
+
+    loadState();
+    renderFavorites();
+    render();
+  })();
+</script>
+</body></html>
