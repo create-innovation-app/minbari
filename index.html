@@ -1,9 +1,5 @@
-﻿<!doctype html>
-<html lang="ja">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>みんバリ</title>
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+﻿<title>みんバリ</title>
 <style>
   :root{
     --bg:#15100c;
@@ -218,6 +214,35 @@
     cursor:pointer;
   }
 
+  /* mode toggle */
+  .mode-toggle{
+    position:relative;
+    display:flex;
+    gap:4px;
+    padding:3px;
+    margin:0 auto 12px;
+    max-width:220px;
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    border-radius:999px;
+  }
+  .mode-btn{
+    flex:1;
+    font-family:"IBM Plex Mono", monospace;
+    font-weight:600;
+    font-size:12px;
+    letter-spacing:.16em;
+    padding:6px 0;
+    border:none;
+    border-radius:999px;
+    background:transparent;
+    color:var(--muted-dim);
+    cursor:pointer;
+  }
+  .mode-btn[data-mode="ice"][aria-pressed="true"]{ background:var(--ice); color:#0e1a1d; }
+  .mode-btn[data-mode="hot"][aria-pressed="true"]{ background:linear-gradient(180deg, #f0a77a, #c0613a); color:#2a0f05; }
+  .stat-num.hot-num{ color:#f0a77a; }
+
   /* strength chips */
   .chips{ display:flex; gap:7px; flex-wrap:wrap; }
   .chip{
@@ -406,11 +431,14 @@
 <meta name="apple-mobile-web-app-title" content="みんバリ">
 <meta name="mobile-web-app-capable" content="yes">
 
-</head>
-<body>
 <div class="page">
   <div class="panel">
     <h1>みんバリ</h1>
+
+    <div class="mode-toggle" id="modeToggle" role="group" aria-label="モード">
+      <button type="button" class="mode-btn" data-mode="ice" aria-pressed="true">ICE</button>
+      <button type="button" class="mode-btn" data-mode="hot" aria-pressed="false">HOT</button>
+    </div>
 
     <div class="fields">
       <div class="vol-block">
@@ -434,7 +462,7 @@
         </div>
       </div>
 
-      <div class="field">
+      <div class="field" id="iceField">
         <div class="field-head">
           <label class="field-label" for="icePct">氷の比率</label>
           <span class="field-value"><span id="iceEcho">40</span>%</span>
@@ -445,9 +473,9 @@
       <div class="field">
         <span class="field-label" style="display:block; margin-bottom:6px;">濃さ</span>
         <div class="chips" id="ratioChips">
-          <button type="button" class="chip" data-ratio="12">濃いめ</button>
-          <button type="button" class="chip" data-ratio="15" aria-pressed="true">標準</button>
-          <button type="button" class="chip" data-ratio="17">軽め</button>
+          <button type="button" class="chip" data-key="strong">濃いめ <span class="chip-ratio"></span></button>
+          <button type="button" class="chip" data-key="normal" aria-pressed="true">標準 <span class="chip-ratio"></span></button>
+          <button type="button" class="chip" data-key="light">軽め <span class="chip-ratio"></span></button>
         </div>
       </div>
 
@@ -460,13 +488,17 @@
             <span class="stat-name">豆</span>
             <span class="stat-num" id="outBeans">33<small>g</small></span>
           </div>
-          <div class="stat">
+          <div class="stat" id="iceStat">
             <span class="stat-name">氷</span>
             <span class="stat-num ice-num" id="outIce">367<small>g</small></span>
           </div>
           <div class="stat">
             <span class="stat-name">お湯</span>
             <span class="stat-num" id="outWater">133<small>g</small></span>
+          </div>
+          <div class="stat" id="tempStat" hidden>
+            <span class="stat-name">湯温</span>
+            <span class="stat-num hot-num">92<small>℃</small></span>
           </div>
         </div>
       </div>
@@ -657,9 +689,23 @@
       updateTimerUI(0);
     }
 
-    // 100℃の湯1gが0℃の氷を溶かす量(g)。比熱4.186J/g℃・融解熱334J/gより算出(参考: Santa Monica College 物理実験資料)
-    var C_WATER = 4.186, L_FUSION = 334, T_HOT = 100;
-    var MELT_K = (C_WATER * T_HOT) / L_FUSION;
+    // 湯1gが溶かす氷の量(g)。旧版は「100℃の湯 × 0℃の氷」で計算していたが、実際は
+    //  ・ドリッパーを通って氷に届く抽出液は約85℃まで下がっている
+    //  ・冷凍庫の氷は約-15℃で、0℃まで温める分の熱も必要(氷の比熱2.09J/g℃)
+    // ため溶ける量は理論値より少なく、氷が指示より多く残っていた。実測に近づくよう補正する。
+    var C_WATER = 4.186, C_ICE = 2.09, L_FUSION = 334, T_BREW_AT_ICE = 85, T_FREEZER = -15;
+    var MELT_K = (C_WATER * T_BREW_AT_ICE) / (L_FUSION + C_ICE * (0 - T_FREEZER)); // ≈0.97(旧1.25)
+
+    // HOTモードの比率(豆1:注ぐ湯)。SCAゴールデンカップ基準は55g/L(約1:18)、
+    // ハンドドリップの一般的な目安は1:15〜1:16(例: 10g:150ml)。推奨湯温は93℃±3℃。
+    var HOT_RATIOS = { strong:14, normal:16, light:18 };
+    var ICE_RATIOS = { strong:12, normal:15, light:17 };
+    var mode = 'ice';
+    var strengthKey = 'normal';
+    var modeBtns = document.querySelectorAll('.mode-btn');
+    var iceField = document.getElementById('iceField');
+    var iceStat = document.getElementById('iceStat');
+    var tempStat = document.getElementById('tempStat');
 
     // ペーパードリップの粉が保持して出てこない湯の量。豆の自重の約2.2倍(参考: Blackout Coffee Co. / Coffee Chronicler)
     var ABSORB_K = 2.2;
@@ -678,7 +724,9 @@
         var s = JSON.parse(raw);
         if(s.volume) volumeInput.value = snapVolume(parseFloat(s.volume));
         if(s.ice) iceInput.value = s.ice;
-        if(s.ratio) selectedRatio = parseFloat(s.ratio);
+        if(s.strength && ICE_RATIOS[s.strength]) strengthKey = s.strength;
+        else if(s.ratio){ var r = parseFloat(s.ratio); strengthKey = r <= 12 ? 'strong' : (r >= 17 ? 'light' : 'normal'); }
+        if(s.mode === 'hot' || s.mode === 'ice') mode = s.mode;
         if(Array.isArray(s.favorites) && s.favorites.length === 3) favorites = s.favorites;
       }catch(e){}
     }
@@ -688,7 +736,8 @@
         localStorage.setItem('iceRatioCalc', JSON.stringify({
           volume: volumeInput.value,
           ice: iceInput.value,
-          ratio: selectedRatio,
+          strength: strengthKey,
+          mode: mode,
           favorites: favorites
         }));
       }catch(e){}
@@ -722,9 +771,38 @@
     function render(){
       var volume = clamp(parseFloat(volumeInput.value) || 0, 0, 5000);
       var icePct = clamp(parseFloat(iceInput.value) || 0, 0, 100);
-      var ratio = selectedRatio;
+      var ratios = mode === 'hot' ? HOT_RATIOS : ICE_RATIOS;
+      var ratio = ratios[strengthKey];
 
-      // 目標: 100℃の湯を注いで溶けきった後の「最終的な氷:液体」比率が icePct になるように、
+      modeBtns.forEach(function(b){ b.setAttribute('aria-pressed', String(b.dataset.mode === mode)); });
+      iceField.hidden = mode === 'hot';
+      iceStat.hidden = mode === 'hot';
+      tempStat.hidden = mode !== 'hot';
+      ratioChips.forEach(function(c){
+        c.setAttribute('aria-pressed', String(c.dataset.key === strengthKey));
+        c.querySelector('.chip-ratio').textContent = '1:' + ratios[c.dataset.key];
+      });
+
+      if(mode === 'hot'){
+        // HOT: 豆:注ぐ湯 = 1:ratio。粉が豆の約2.2倍の湯を保持するため、
+        // カップに落ちる量(=出来上がり容量)から逆算して注ぐ湯を求める。
+        var hotWaterG = volume * ratio / (ratio - ABSORB_K);
+        var hotBeansG = hotWaterG / ratio;
+        outBeans.innerHTML = fmt(Math.round(hotBeansG), 0) + '<small>g</small>';
+        outWater.innerHTML = fmt(Math.round(hotWaterG), 0) + '<small>g</small>';
+        volDownBtn.disabled = volume <= VOL_MIN;
+        volUpBtn.disabled = volume >= VOL_MAX;
+        lastBeansG = hotBeansG;
+        lastWaterG = hotWaterG;
+        if(timerState === 'idle'){
+          timerSchedule = computeSchedule(lastBeansG, lastWaterG);
+          updateTimerUI(0);
+        }
+        saveState();
+        return;
+      }
+
+      // 目標: 湯を注いで溶けきった後の「最終的な氷:液体」比率が icePct になるように、
       // 事前に用意する氷の量と、注ぐ湯の量を逆算する。
       // 挽いた豆は自重の約2.2倍の湯を保持して外に出てこない(ペーパードリップの保水率)ため、
       // その分を上乗せして注がないと、仕上がりが指定容量より少なく・濃くなってしまう。
@@ -746,8 +824,6 @@
 
       volDownBtn.disabled = volume <= VOL_MIN;
       volUpBtn.disabled = volume >= VOL_MAX;
-
-      ratioChips.forEach(function(c){ c.setAttribute('aria-pressed', String(parseFloat(c.dataset.ratio) === ratio)); });
 
       lastBeansG = beansG;
       lastWaterG = waterG;
@@ -779,7 +855,16 @@
     });
 
     ratioChips.forEach(function(c){
-      c.addEventListener('click', function(){ selectedRatio = parseFloat(c.dataset.ratio); render(); });
+      c.addEventListener('click', function(){ strengthKey = c.dataset.key; render(); });
+    });
+
+    modeBtns.forEach(function(b){
+      b.addEventListener('click', function(){
+        if(mode === b.dataset.mode) return;
+        mode = b.dataset.mode;
+        if(timerState !== 'idle') resetTimer();
+        render();
+      });
     });
 
     timerStartBtn.addEventListener('click', function(){
@@ -844,5 +929,4 @@
     render();
   })();
 </script>
-</body>
-</html>
+</body></html>
